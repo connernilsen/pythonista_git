@@ -1,7 +1,14 @@
+import os
 import random
 import socket
+import sys
 from http import server
 from enum import Enum
+
+IS_PYTHONISTA = "Pythonista3" in os.getenv("HOME", "")
+
+if IS_PYTHONISTA:
+    import dialogs
 
 NUM_PLAYERS = 0
 REMAINING_ROLES = []
@@ -30,7 +37,18 @@ def get_role_counts(num_players):
     }
 
 def get_num_players():
-    return 8
+    if IS_PYTHONISTA:
+        return dialogs.list_dialog("Number of Players", range(5, 11))
+    else:
+        args = sys.argv
+        if len(args) != 2:
+            raise ValueError("Expected number of players as argument to script")
+        if not args[1].isnumeric():
+            raise ValueError("Expected number of players to be a number")
+        num_players = int(args[1])
+        if not (5 <= num_players <= 10):
+            raise ValueError("Number of players must be between 5 and 10")
+        return num_players
 
 def create_roles():
     global REMAINING_ROLES, NUM_PLAYERS
