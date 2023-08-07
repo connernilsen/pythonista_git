@@ -14,6 +14,7 @@ if IS_PYTHONISTA:
 NUM_PLAYERS = 0
 REMAINING_ROLES = []
 IP_ROLES = {}
+SERVER_TIMEOUT_SECONDS = 60 * 3
 
 class Role(Enum):
     FASCIST = 'Fascist'
@@ -155,16 +156,6 @@ def get_local_ip():
     return ip
 
 
-def start_server(http_server, ip):
-    RequestHandler.server_version = "HTTP/1.1"
-    RequestHandler.close_connection = True
-    print(f'Server started @ {ip}')
-    try:
-        http_server.serve_forever()
-    except:
-        http_server.server_close()
-        print("shut down server")
-
 def main():
     global NUM_PLAYERS
     NUM_PLAYERS = get_num_players()
@@ -173,13 +164,25 @@ def main():
     port = 80
     
     with server.HTTPServer(('', port), RequestHandler) as http_server:
+        RequestHandler.server_version = "HTTP/1.1"
+        RequestHandler.close_connection = True
         with ThreadPoolExecutor(max_workers=1) as executor:
-            future = executor.submit(start_server, http_server, ip)
+            future = executor.submit(http_server.serve_forever)
+            print(f'Server started @ {ip}, will run for {SERVER_TIMEOUT_SECONDS} seconds')
             try:
-                future.result(timeout=60 * 3) # run for 3 min max
+                future.result(timeout=SERVER_TIMEOUT_SECONDS)
             except TimeoutError:
                 print("Stopping server from timeout")
                 http_server.shutdown()
+            except KeyboardInterrupt:
+                print("Stopping server from user interrupt")
+                http_server.shutdown()
+            except:
+                print("Received unknown exception")
+                http_server.shutdown()
+                raise sys.exc_info()
+            finally:
+                print("Shut down server")
 
     print(IP_ROLES)
 
