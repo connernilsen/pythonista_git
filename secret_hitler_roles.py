@@ -4,6 +4,7 @@ import socket
 import sys
 from http import server
 from enum import Enum
+from concurrent.futures import ThreadPoolExecutor, TimeoutError
 
 IS_PYTHONISTA = "Pythonista3" in os.getenv("HOME", "")
 
@@ -139,7 +140,7 @@ class RequestHandler(server.BaseHTTPRequestHandler):
         IP_ROLES[client_address] = role
         print(self.client_address)
         self._send_response(role, party)
-        
+
 
 def get_local_ip():
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -154,22 +155,31 @@ def get_local_ip():
     return ip
 
 
+def start_server(http_server, ip):
+    RequestHandler.server_version = "HTTP/1.1"
+    RequestHandler.close_connection = True
+    print(f'Server started @ {ip}')
+    try:
+        http_server.serve_forever()
+    except:
+        http_server.server_close()
+        print("shut down server")
+
 def main():
     global NUM_PLAYERS
     NUM_PLAYERS = get_num_players()
     create_roles()
-    port = 80
     ip = get_local_ip()
-
+    port = 80
+    
     with server.HTTPServer(('', port), RequestHandler) as http_server:
-        RequestHandler.server_version = "HTTP/1.1"
-        RequestHandler.close_connection = True
-        print(f'Server started @ {ip}')
-        try:
-            http_server.serve_forever()
-        except:
-            http_server.server_close()
-            print("shut down server")
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(start_server, http_server, ip)
+            try:
+                future.result(timeout=60 * 3) # run for 3 min max
+            except TimeoutError:
+                print("Stopping server from timeout")
+                http_server.shutdown()
 
     print(IP_ROLES)
 
