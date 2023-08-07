@@ -1,10 +1,10 @@
 import os
 import random
-import socket
 import sys
-from http import server
 from enum import Enum
-from concurrent.futures import ThreadPoolExecutor, TimeoutError
+
+from simple_http_server import BaseRequestHandler, start_server
+
 
 IS_PYTHONISTA = "Pythonista3" in os.getenv("HOME", "")
 
@@ -14,7 +14,6 @@ if IS_PYTHONISTA:
 NUM_PLAYERS = 0
 REMAINING_ROLES = []
 IP_ROLES = {}
-SERVER_TIMEOUT_SECONDS = 60 * 3
 
 class Role(Enum):
     FASCIST = 'Fascist'
@@ -61,11 +60,9 @@ def create_roles():
 
     random.shuffle(REMAINING_ROLES)
 
-class RequestHandler(server.BaseHTTPRequestHandler):
-    protocol_version = 'HTTP/1.1'
-
+class RequestHandler(BaseRequestHandler):
     @staticmethod
-    def _create_response(role, party):
+    def create_envelope_response(role, party):
         prefix = '''
         <html>
             <head>
@@ -118,71 +115,24 @@ class RequestHandler(server.BaseHTTPRequestHandler):
         '''
         return prefix + role_line + infix + party_line + postfix
 
-    def _send_response(self, role, party):
-        response = self._create_response(role, party)
-        self.send_response(200)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.send_header("Connection", "close")
-        self.end_headers()
-        self.wfile.write(bytes(response, "utf-8"))
-
-    def do_GET(self):
+    def get_message(self):
         client_address = self.client_address[0]
         if client_address in IP_ROLES:
             print("Found existing IP")
             role = IP_ROLES[client_address]
-            party = ROLE_PARTY[role]
-            self._send_response(role, party)
-            return
+        else:
+            print("Found new IP")
+            role = REMAINING_ROLES.pop()
+            IP_ROLES[client_address] = role
 
-        print("Found new IP")
-        role = REMAINING_ROLES.pop()
-        party = ROLE_PARTY[role]
-        IP_ROLES[client_address] = role
-        print(self.client_address)
-        self._send_response(role, party)
-
-
-def get_local_ip():
-    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    s.settimeout(0)
-    try:
-        s.connect(('8.8.8.8', 1))
-        ip = s.getsockname()[0]
-    except Exception:
-        ip = '127.0.0.1'
-    finally:
-        s.close()
-    return ip
+        return self.create_envelope_response(role, ROLE_PARTY[role])
 
 
 def main():
     global NUM_PLAYERS
     NUM_PLAYERS = get_num_players()
     create_roles()
-    ip = get_local_ip()
-    port = 80
-    
-    with server.HTTPServer(('', port), RequestHandler) as http_server:
-        RequestHandler.server_version = "HTTP/1.1"
-        RequestHandler.close_connection = True
-        with ThreadPoolExecutor(max_workers=1) as executor:
-            future = executor.submit(http_server.serve_forever)
-            print(f'Server started @ {ip}, will run for {SERVER_TIMEOUT_SECONDS} seconds')
-            try:
-                future.result(timeout=SERVER_TIMEOUT_SECONDS)
-            except TimeoutError:
-                print("Stopping server from timeout")
-                http_server.shutdown()
-            except KeyboardInterrupt:
-                print("Stopping server from user interrupt")
-                http_server.shutdown()
-            except:
-                print("Received unknown exception")
-                http_server.shutdown()
-                raise sys.exc_info()
-            finally:
-                print("Shut down server")
+    start_server(RequestHandler)
 
     print(IP_ROLES)
 
