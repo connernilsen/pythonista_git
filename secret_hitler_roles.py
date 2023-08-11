@@ -2,8 +2,10 @@ import os
 import random
 import sys
 from enum import Enum
+from dataclasses import dataclass
+from typing import Optional
 
-from simple_http_server import BaseRequestHandler, start_server
+from simple_http_server import BaseRequestHandler, start_server, urlparse, parse_qs
 
 
 IS_PYTHONISTA = "Pythonista3" in os.getenv("HOME", "")
@@ -15,17 +17,28 @@ NUM_PLAYERS = 0
 REMAINING_ROLES = []
 IP_ROLES = {}
 
+
 class Role(Enum):
-    FASCIST = 'Fascist'
-    LIBERAL = 'Liberal'
-    HITLER = 'Hitler'
+    FASCIST = "Fascist"
+    LIBERAL = "Liberal"
+    HITLER = "Hitler"
 
 
-ROLE_PARTY = {
-    Role.LIBERAL: Role.LIBERAL,
-    Role.FASCIST: Role.FASCIST,
-    Role.HITLER: Role.FASCIST,
-}
+@dataclass
+class UserRoleMapping:
+    ROLE_PARTY = {
+        Role.LIBERAL: Role.LIBERAL,
+        Role.FASCIST: Role.FASCIST,
+        Role.HITLER: Role.FASCIST,
+    }
+    role: Role
+    party: Role
+    name: Optional[str]
+
+    def __init__(self, role):
+        self.role = role
+        self.party = self.ROLE_PARTY[role]
+        self.name = None
 
 
 def get_role_counts(num_players):
@@ -36,6 +49,7 @@ def get_role_counts(num_players):
         Role.FASCIST: num_fascists,
         Role.HITLER: 1,
     }
+
 
 def get_num_players():
     if IS_PYTHONISTA:
@@ -51,6 +65,7 @@ def get_num_players():
             raise ValueError("Number of players must be between 5 and 10")
         return num_players
 
+
 def create_roles():
     global REMAINING_ROLES, NUM_PLAYERS
     roles = get_role_counts(NUM_PLAYERS)
@@ -60,9 +75,10 @@ def create_roles():
 
     random.shuffle(REMAINING_ROLES)
 
+
 class RequestHandler(BaseRequestHandler):
     @staticmethod
-    def create_envelope_response(role, party):
+    def create_envelope_response(player, insert_post_request):
         prefix = '''
         <html>
             <head>
@@ -77,7 +93,7 @@ class RequestHandler(BaseRequestHandler):
                     button {
                         margin: 50px;
                     }
-                    p {
+                    p, label, h1 {
                         padding: 50px;
                         color: white;
                     }
@@ -94,12 +110,22 @@ class RequestHandler(BaseRequestHandler):
                 </script>
             </head>
             <body>
+        '''
+        player_name = f"<h1>Hello! {player.name}</h1>"
+        post_request = '''
+                <form method="GET" action="/?sendName">
+                    <label for="nameInput">What's your name? (make it identifiable)</label>
+                    <input id="nameInput" name="playerName" placeholder="..." />
+                    <button type="submit">Send</button>
+                </form>
+        '''
+        role_div = '''
                 <button onClick="showDiv('roleDiv')">
                     Click to toggle role <span style="color: red">(do not show anyone else this)</span>
                 </button>
                 <div id="roleDiv">
         '''
-        role_line = f"<p>Your role is {role.name}</p>"
+        role_line = f"<p>Your role is {player.role.name}</p>"
         infix = '''
                 </div>
                 <button onClick="showDiv('partyDiv')">
@@ -107,25 +133,43 @@ class RequestHandler(BaseRequestHandler):
                 </button>
                 <div id="partyDiv">
                 '''
-        party_line = f"<p>Your party is {party.name}</p>"
+        party_line = f"<p>Your party is {player.party.name}</p>"
         postfix = '''
                 </div>
             </body>
         </html>
         '''
-        return prefix + role_line + infix + party_line + postfix
+        response = prefix
+        if player.name is not None:
+            response += player_name
+        if insert_post_request:
+            response += post_request
+        response += role_div + role_line + infix + party_line + postfix
+        return response
 
-    def get_message(self):
+    def get_message(self, body):
+        url = urlparse(self.path)
+        query = parse_qs(url.query) if url.query is not None else {}
+        player_name = query.get("playerName")
         client_address = self.client_address[0]
         if client_address in IP_ROLES:
             print("Found existing IP")
-            role = IP_ROLES[client_address]
+            player = IP_ROLES[client_address]
+            if player.name is None and player_name is not None:
+                player.name = player_name
+            needs_to_get_name = player.name is None
         else:
             print("Found new IP")
-            role = REMAINING_ROLES.pop()
-            IP_ROLES[client_address] = role
+            player = UserRoleMapping(REMAINING_ROLES.pop())
+            IP_ROLES[client_address] = player
+            if player_name is not None:
+                player.name = player_name
+            needs_to_get_name = player.name is None
 
-        return self.create_envelope_response(role, ROLE_PARTY[role])
+        response = self.create_envelope_response(
+            player, needs_to_get_name
+        )
+        return response
 
 
 def main():
@@ -136,5 +180,6 @@ def main():
 
     print(IP_ROLES)
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     main()
