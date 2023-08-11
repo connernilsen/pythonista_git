@@ -16,6 +16,7 @@ if IS_PYTHONISTA:
 NUM_PLAYERS = 0
 REMAINING_ROLES = []
 IP_ROLES = {}
+KNOWN_FASCISTS = []
 
 
 class Role(Enum):
@@ -40,6 +41,14 @@ class UserRoleMapping:
         self.party = self.ROLE_PARTY[role]
         self.name = None
 
+    def get_player_name(self, is_current_player):
+        if self.name is None:
+            return "Unknown (refresh later to see this change)"
+        elif is_current_player:
+            return f"{self.name} (you)"
+        else:
+            return self.name
+
 
 def get_role_counts(num_players):
     num_liberals = num_players // 2 + 1
@@ -49,6 +58,10 @@ def get_role_counts(num_players):
         Role.FASCIST: num_fascists,
         Role.HITLER: 1,
     }
+
+
+def does_hitler_know_fascists(NUM_PLAYERS):
+    return NUM_PLAYERS <= 6
 
 
 def get_num_players():
@@ -77,6 +90,27 @@ def create_roles():
 
 
 class RequestHandler(BaseRequestHandler):
+    @staticmethod
+    def create_role_card(player):
+        role_div = '''
+                <button onClick="showDiv('roleDiv')">
+                    Click to toggle role <span style="color: red">(do not show anyone else this)</span>
+                </button>
+                <div id="roleDiv" style="display: none">
+        '''
+        role_line = f"<p>Your role is {player.role.name}</p>"
+        if player.party == Role.FASCIST and (does_hitler_know_fascists(NUM_PLAYERS) or player.role != Role.HITLER):
+            fascists = [
+                fascist.get_player_name(fascist == player)
+                for fascist in KNOWN_FASCISTS
+            ]
+            print(fascists)
+            fascist_players = f"<p>The other fascists are: {', '.join(fascists)}</p>"
+        else:
+            fascist_players = ""
+        role_div_close = "</div>"
+        return role_div + role_line + fascist_players + role_div_close
+
     @staticmethod
     def create_envelope_response(player, insert_post_request):
         prefix = '''
@@ -111,7 +145,7 @@ class RequestHandler(BaseRequestHandler):
             </head>
             <body>
         '''
-        player_name = f"<h1>Hello! {player.name}</h1>"
+        player_name = f"<h1>Hello! {player.name}, we're still waiting on {len(REMAINING_ROLES)} players</h1>"
         post_request = '''
                 <form method="GET" action="/?sendName">
                     <label for="nameInput">What's your name? (make it identifiable)</label>
@@ -119,19 +153,12 @@ class RequestHandler(BaseRequestHandler):
                     <button type="submit">Send</button>
                 </form>
         '''
-        role_div = '''
-                <button onClick="showDiv('roleDiv')">
-                    Click to toggle role <span style="color: red">(do not show anyone else this)</span>
-                </button>
-                <div id="roleDiv">
-        '''
-        role_line = f"<p>Your role is {player.role.name}</p>"
+        role_card = RequestHandler.create_role_card(player)
         infix = '''
-                </div>
-                <button onClick="showDiv('partyDiv')">
+            <button onClick="showDiv('partyDiv')">
                 Click to toggle party <span style="color: green">(show this if you're being investigated)</span>
                 </button>
-                <div id="partyDiv">
+                <div id="partyDiv" style="display: none">
                 '''
         party_line = f"<p>Your party is {player.party.name}</p>"
         postfix = '''
@@ -144,7 +171,7 @@ class RequestHandler(BaseRequestHandler):
             response += player_name
         if insert_post_request:
             response += post_request
-        response += role_div + role_line + infix + party_line + postfix
+        response += role_card + infix + party_line + postfix
         return response
 
     def get_message(self, body):
@@ -155,15 +182,18 @@ class RequestHandler(BaseRequestHandler):
         if client_address in IP_ROLES:
             print("Found existing IP")
             player = IP_ROLES[client_address]
-            if player.name is None and player_name is not None:
-                player.name = player_name
+            if player.name is None and player_name:
+                player.name = player_name[0]
             needs_to_get_name = player.name is None
         else:
             print("Found new IP")
             player = UserRoleMapping(REMAINING_ROLES.pop())
             IP_ROLES[client_address] = player
-            if player_name is not None:
-                player.name = player_name
+            if player.party == Role.FASCIST:
+                KNOWN_FASCISTS.append(player)
+            if player_name:
+                player.name = player_name[0]
+
             needs_to_get_name = player.name is None
 
         response = self.create_envelope_response(
